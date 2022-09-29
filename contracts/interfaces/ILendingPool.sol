@@ -3,7 +3,7 @@ pragma solidity >=0.6.0 <0.7.0;
 interface ILendingPool {
     function addressesProvider() external view returns (address);
     
-    function deposit(address _reserve, uint256 _amount, uint16 _referralCode) external payable;
+    function deposit(address _reserve, uint256 _amount, address onBehalfOf,uint16 _referralCode) external payable;
 
     function redeemUnderlying(address _reserve, address _user, uint256 _amount) external;
 
