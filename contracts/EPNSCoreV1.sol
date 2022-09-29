@@ -850,16 +850,16 @@ contract EPNSCoreV1 is Initializable{
      * @param   amount - Amount that is to be deposited
      **/
     function _depositFundsToPool(uint256 amount) private {
-        POOL_FUNDS = POOL_FUNDS.add(amount);
+         POOL_FUNDS = POOL_FUNDS.add(amount);
 
-        ILendingPoolAddressesProvider provider = ILendingPoolAddressesProvider(
-            lendingPoolProviderAddress
-        );
-        ILendingPool lendingPool = ILendingPool(provider.getLendingPool());
-        IERC20(daiAddress).approve(provider.getLendingPoolCore(), amount);
-        // Deposit to AAVE
-        lendingPool.deposit(daiAddress, amount, uint16(REFERRAL_CODE)); // set to 0 in constructor presently
-    }
+         ILendingPoolAddressesProvider provider = ILendingPoolAddressesProvider(
+             lendingPoolProviderAddress
+         );
+         ILendingPool lendingPool = ILendingPool(provider.getLendingPool());
+         IERC20(daiAddress).approve(provider.getLendingPool(), amount);
+         // Deposit to AAVE
+         lendingPool.deposit(daiAddress, amount, address(this), uint16(REFERRAL_CODE)); // set to 0 in constructor presently
+     }
 
     /**
      * @notice Swaps aDai to PUSH Tokens and Transfers to the USER Address
