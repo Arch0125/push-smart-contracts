@@ -976,4 +976,117 @@ contract EPNSCoreV2 is
         }
         return chainId;
     }
+
+    // EXPERIMENTAL ZONE - EPOCH BASED
+
+    uint epoch1Start;
+    uint256 totalWeight;
+    uint256 epochDuration = 20 days;
+    uint lastInitializedEpochId;
+
+    struct Epoch{
+        uint256 epochRewards;
+        uint256 poolSize;
+        bool epochInitiailzed;
+    }
+
+    struct User{
+        uint256[] epochId;
+        uint256 epochRewards;
+        mapping(uint256 => uint256) epochToStakedAmount;
+    }
+
+    mapping(address => User) public userDetails;
+    mapping(uint256 => Epoch) public epochDetails;
+
+    // Staking during a currently Active epoch, initializes that epoch if it isn't already
+    // Stores the UserDetails of an EPOCH.
+    // Can the staker stake multiple times in the Same EpochID? 
+    // 
+    function stake(uint256 _amount) external {
+        IERC20(PUSH_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 currentEpoch = getCurrentEpoch();
+        
+        if(!epochDetails[currentEpoch].epochInitiailzed){
+            initializeEpoch(currentEpoch);
+        }
+        epochDetails[_currentEpoch].poolSize += _amount;
+
+        User storage userData = userDetails[msg.sender];
+        userData.epochId.push(currentEpoch);
+        userData.epochRewards = epochDetails[currentEpoch].epochRewards;
+        userData.epochToStakedAmount[currentEpoch] += _amount;
+    }
+
+    function initializeEpoch(uint265 epochId) internal {
+        Epoch storage epochData = epochDetails[epochId];
+        if(epochId == 0) {
+            epochData.epochRewards = 0;
+            epochData.poolSize = 0;
+            epochData.epochInitiailzed = true;
+        }else{
+            uint currrentPoolFee = PROTOCOL_POOL_FEES;
+            PROTOCOL_POOL_FEES = 0;
+
+            epochData.epochRewards = currrentPoolFee;
+            epochData.poolSize = 0;
+            epochData.epochInitiailzed = true;  
+        }
+    } 
+    function getCurrentEpoch() public view returns (uint128) { //@audit-ok
+        if (block.timestamp < epoch1Start) {
+            return 0;
+        }
+        return uint128((block.timestamp - epoch1Start) / epochDuration + 1);
+    }
+
+    function unstake(uint256 _amount) external {
+
+    }
+
+    function claimAllRewards() external {
+        userDetails storage userData = userDetails[msg.sender];
+        uint256 totalEpochs[] = userData.epochId;
+
+        for(uint i = 0; i < totalEpochs.length; i++){
+            if(userData.epochToStakedAmount[i] > 0 ){
+                uint256 userTotalStakeAmount = userTotalStakeAmount += userData.epochToStakedAmount[i];
+                uint256 totalStakedAmount = epochDetails[i].poolSize;
+                uint rewardsAtEpoch = epochDetails[i].epochRewards;
+
+                // Calculate total Rewards for user and transfer
+                // Reset after all rewards done. -> Needs to be checked
+
+            }
+        }
+    }
+
+    function claimRewards(uin256 _epochId) public {
+        require(_epochId < getCurrentEpoch(), "Cannot claim on-going epoch cycle");
+        uint256 userAmount = userDetails[msg.sender].epochToStakedAmount[_epochId];
+        uint256 totalAmount = epochDetails[_epochId].poolSize;
+        uint256 rewards = epochDetails[_epochId].epochRewards;
+
+        // userAmount.div(totalAmount).mul(rewards);
+        // Reset the User's holder weight
+    }
+    // function _setEpochRewards(uint256 lastInitializedEpochId, uint256 _currentEpochID) internal{
+    //     uint currrentPoolFee = PROTOCOL_POOL_FEES;
+    //     uint emptyEpochs;
+    //     uint[] epochIds;
+    //     for(uint i = lastInitializedEpochId; i < _currentEpochID; i++){
+    //         if( epochIdToRewards[0] > 0 ){
+    //             continue;
+    //         }else{
+    //             emptyEpochs++;
+    //             epochIds[i] = i+1;
+    //         }
+
+    //     }
+    //     uint rewardForEachEpoch = currrentPoolFee.div(emptyEpochs);
+    //     for(uint i = 0; i < emptyEpochs; i++ ){
+    //         epochIdToRewards[epochIds[i]] = rewardForEachEpoch;
+    //     } 
+    //     lastInitializedEpochId = _currentEpochID;
+    // } 
 }
