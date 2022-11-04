@@ -978,44 +978,170 @@ contract EPNSCoreV2 is
     }
 
     // EXPERIMENTAL ZONE - EPOCH BASED
-    mapping (uint128 => uint256) epochReward; // store all the individual epoch rewards
-    uint256 previouslySetEpochRewards;
 
-    uint128 genesisEpoch = block.timestamp;
-    uint128 lastEpochInitialized = genesisEpoch;
-    uint128 epochDuration = 20 days; // make this a constant
-    
-    // Returns current Epoch
-    function currentEpochNumber() public view returns (uint128) {
-      if (block.timestamp < genesisEpoch) {
-        return 0;
+
+    // Stake, Unstake and Harvest
+    mapping (address => UserFessInfo) userFeesInfo;
+    struct UserFessInfo {
+      uint256 stakedAmount;
+      uint256 stakedWeight;
+
+      uint256 lastStakedBlock;
+      uint256 lastClaimedBlock;
+
+      mapping(uint256 => uint256) epochToUserStakedWeight;
+    }
+
+    uint256 totalStakedWeight;
+    mapping(uint256 => uint256) epochToTotalStakedWeight;
+
+    function _returnPushTokenWeight(address _account, uint _amount, uint _atBlock) internal view returns (uint) {
+      return _amount.mul(_atBlock.sub(IPUSH(PUSH_TOKEN_ADDRESS).holderWeight(_account)));
+    }
+
+    function stake(uint256 _amount) external {
+      // Check and calculate the weight
+      uint256 userWeight = _returnPushTokenWeight(msg.sender, _amount, block.number);
+
+      // Transfer token
+      // TO CHECK: safeTransferFrom is not in the ERC20 PUSH contract
+      IERC20(PUSH_TOKEN_ADDRESS).transferFrom(msg.sender, address(this), _amount);
+
+      // add user amount
+      userFeesInfo[msg.sender].stakedAmount = userFeesInfo[msg.sender].stakedAmount + _amount;
+
+      // Adjust user and total rewards, piggyback method
+      _adjustUserAndTotalStake(msg.sender, userWeight);
+    }
+
+    function unstake() external {
+      // Before unstaking, reset holder weight
+      IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
+
+      // TO CHECK: transfer since approval not requried but double check
+      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, userFeesInfo[msg.sender].stakedAmount);
+
+      // Also Harvest any rewards
+      harvestAll();
+
+      // Adjust user and total rewards, piggyback method
+      _adjustUserAndTotalStake(msg.sender, -userFeesInfo[msg.sender].stakedWeight);
+
+      // change staked amount to 0 and lastClaimedBlock to current
+      userFeesInfo[msg.sender].stakedAmount = 0;
+      userFeesInfo[msg.sender].stakedWeight = 0;
+      userFeesInfo[msg.sender].lastStakedBlock = block.number;
+      userFeesInfo[msg.sender].lastClaimedBlock = block.number;
+    }
+
+    function harvestAll() public {
+      harvestTill(block.number);
+    }
+
+    function harvestTill(uint256 _tillBlockNumber) public {
+      // Before harvesting, reset holder weight
+      IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
+
+      // Adjust user and total rewards, piggyback method
+      _adjustUserAndTotalStake(msg.sender, 0);
+
+      // calculate last claimed epoch of user and eligible epochs
+      uint256 lastClaimedEpoch = lastEpochRelative(userFeesInfo[msg.sender].lastClaimedBlock, _tillBlockNumber);
+      uint256 eligibleEpochs = lastEpochRelative(block.number, _tillBlockNumber);
+      uint256 rewards = 0;
+
+      for(uint i = lastClaimedEpoch; i < eligibleEpochs; i++) {
+        rewards = rewards.add(calcEpochRewards(i));
       }
 
-      return uint128((block.timestamp - genesisEpoch) / epochDuration + 1);
+      // Transfer token
+      // TO CHECK: transfer since approval not requried but double check
+      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
+
+      userFeesInfo[msg.sender].lastClaimedBlock = _tillBlockNumber;
     }
 
-    function lastEpochNumber() public view returns (uint128) {
-      return uint128((lastEpochInitialized - genesisEpoch) / epochDuration + 1);
+    function calcEpochRewards(uint256 epochId) view public returns (uint256) {
+      return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].div(epochToTotalStakedWeight[epochId]).mul(epochReward[epochId]);
     }
 
-    function setupEpochsReward() internal {
+    function _adjustUserAndTotalStake(address _user, uint256 _userWeight) internal {
+      // setup epoch rewards, piggyback method
+      // ensures all epochs are initialized and accounted for
+      _setupEpochsReward();
+
+      // Check if the user has not staked, if so, simply initialize
+      if (userFeesInfo[_user].stakedWeight == 0) {
+        // new stake
+        userFeesInfo[_user].stakedWeight = _userWeight;
+        totalStakedWeight = totalStakedWeight + _userWeight;
+      } 
+      else {
+        // user already has stake, check the current epoch
+        uint256 lastStakedEpoch = lastEpochRelative(userFeesInfo[_user].lastStakedBlock, block.number);
+        uint256 totalEpochs = lastEpochRelative(genesisEpoch, block.number);
+
+        if (totalEpochs == lastStakedEpoch) {
+          // same epoch
+          userFeesInfo[_user].stakedWeight = userFeesInfo[_user].stakedWeight + _userWeight;
+          totalStakedWeight = totalStakedWeight + _userWeight;
+        }
+        else {
+          // different epoch is started
+          for(uint i = lastStakedEpoch; i < totalEpochs; i++) {
+            if (i != totalEpochs - 1) {
+              // all epoch but the last one in the loop should have old staked info
+              userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
+              epochToTotalStakedWeight[i] = totalStakedWeight;
+            }
+            else {
+              // the last of the epoch should have new info
+              userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight + _userWeight;
+              epochToTotalStakedWeight[i] = totalStakedWeight + _userWeight;
+            }
+          }
+        }
+      }
+
+      // only run the below logic if amount is getting decreased or increased
+      if (_userWeight != 0) {
+        userFeesInfo[_user].lastStakedBlock = block.number;
+      }
+    }
+
+    // Epoch Setup and Rewards
+    mapping (uint256 => uint256) epochReward; // store all the individual epoch rewards
+    uint256 previouslySetEpochRewards;
+
+    uint256 genesisEpoch = block.number;
+    uint256 lastEpochInitialized = genesisEpoch;
+    uint256 epochDuration = 20 * 7156; // make this a constant, 20 * number of blocks per day is 20 day approx
+    
+    // Returns current Epoch
+    function lastEpochRelative(uint256 _from, uint256 _to) public view returns (uint256) {
+      require(_to > _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow");
+
+      return uint256((_to - _from) / epochDuration + 1);
+    }
+
+    function _setupEpochsReward() internal {
       // Check if epoch setup is needed
-      if (lastEpochNumber() < currentEpochNumber()) {
+      uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number);
+      uint256 lastEpochId = lastEpochRelative(genesisEpoch, previouslySetEpochRewards);
+
+      if (currentEpochId > lastEpochId) {
         // do a for loop and initialize the epochs
-        uint128 epochDiff = currentEpochNumber() - lastEpochNumber();
+        // TODO: REPLACE PROTOCOL_POOL_FEES
         uint256 pendingRewardsPerEpoch = (PROTOCOL_POOL_FEES - previouslySetEpochRewards);
         
-        if (pendingRewardsPerEpoch > 0) {
-          pendingRewardsPerEpoch = pendingRewardsPerEpoch.div(epochDiff);
-        }
-
-        for (uint128 i = epochDiff; i <= currentEpochNumber(); i++) {
-            // set rewards
-            epochReward[i] = pendingRewardsPerEpoch;
-        }
-
+        // assign just the currentEpoch - 1 since currentEpoch rewards can't be distributed
+        // rest will default to 0
+        epochReward[currentEpochId - 1] = pendingRewardsPerEpoch;
+        
+        // update previously set epoch
+        // TODO: REPLACE PROTOCOL_POOL_FEES
         previouslySetEpochRewards = PROTOCOL_POOL_FEES;
-        lastEpochInitialized = block.timestamp;
+        lastEpochInitialized = block.number;
       }
     }
 
