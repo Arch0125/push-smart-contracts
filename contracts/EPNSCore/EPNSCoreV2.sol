@@ -995,6 +995,7 @@ contract EPNSCoreV2 is
     uint256 totalStakedWeight;
     mapping(uint256 => uint256) epochToTotalStakedWeight;
 
+
     function _returnPushTokenWeight(address _account, uint _amount, uint _atBlock) internal view returns (uint) {
       return _amount.mul(_atBlock.sub(IPUSH(PUSH_TOKEN_ADDRESS).holderWeight(_account)));
     }
@@ -1009,6 +1010,8 @@ contract EPNSCoreV2 is
 
       // add user amount
       userFeesInfo[msg.sender].stakedAmount = userFeesInfo[msg.sender].stakedAmount + _amount;
+      userFeesInfo[msg.sender].lastClaimedBlock =  
+            userFeesInfo[msg.sender].lastClaimedBlock == 0 ? genesisEpoch : userFeesInfo[msg.sender].lastClaimedBlock;
 
       // Adjust user and total rewards, piggyback method
       _adjustUserAndTotalStake(msg.sender, userWeight);
@@ -1039,6 +1042,7 @@ contract EPNSCoreV2 is
     }
 
     function harvestTill(uint256 _tillBlockNumber) public {
+      console.log('d 0');
       // Before harvesting, reset holder weight
       IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
 
@@ -1047,12 +1051,17 @@ contract EPNSCoreV2 is
 
       // calculate last claimed epoch of user and eligible epochs
       uint256 lastClaimedEpoch = lastEpochRelative(userFeesInfo[msg.sender].lastClaimedBlock, _tillBlockNumber);
-      uint256 eligibleEpochs = lastEpochRelative(block.number, _tillBlockNumber);
+      uint256 eligibleEpochs = lastEpochRelative(genesisEpoch, block.number).sub(lastClaimedEpoch);  
+      eligibleEpochs = eligibleEpochs == 0 ? lastClaimedEpoch : eligibleEpochs;
+    //   uint256 eligibleEpochs = lastEpochRelative(block.number, _tillBlockNumber);
       uint256 rewards = 0;
-
-      for(uint i = lastClaimedEpoch; i < eligibleEpochs; i++) {
+      for(uint i = 6; i < 11; i++) {
+        console.log('loop',i);
         rewards = rewards.add(calcEpochRewards(i));
       }
+
+      // track reward
+      usersRewardsClaimed[msg.sender] = usersRewardsClaimed[msg.sender].add(rewards);
 
       // Transfer token
       // TO CHECK: transfer since approval not requried but double check
@@ -1069,7 +1078,7 @@ contract EPNSCoreV2 is
       // setup epoch rewards, piggyback method
       // ensures all epochs are initialized and accounted for
       _setupEpochsReward();
-
+        
       // Check if the user has not staked, if so, simply initialize
       if (userFeesInfo[_user].stakedWeight == 0) {
         // new stake
@@ -1088,6 +1097,7 @@ contract EPNSCoreV2 is
         }
         else {
           // different epoch is started
+          console.log("loooping",lastStakedEpoch,'to',totalEpochs);
           for(uint i = lastStakedEpoch; i < totalEpochs; i++) {
             if (i != totalEpochs - 1) {
               // all epoch but the last one in the loop should have old staked info
@@ -1113,21 +1123,37 @@ contract EPNSCoreV2 is
     mapping (uint256 => uint256) epochReward; // store all the individual epoch rewards
     uint256 previouslySetEpochRewards;
 
+
+    // for these 3 add setter function
     uint256 genesisEpoch = block.number;
     uint256 lastEpochInitialized = genesisEpoch;
     uint256 epochDuration = 20 * 7156; // make this a constant, 20 * number of blocks per day is 20 day approx
     
-    // Returns current Epoch
-    function lastEpochRelative(uint256 _from, uint256 _to) public view returns (uint256) {
-      require(_to > _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow");
+    function tempSetterFunction() external{
+        genesisEpoch = block.number; // blockNummber ?? epoch ??
+        lastEpochInitialized = genesisEpoch;
+        epochDuration = 20 * 7156;
+    }
 
+    // Returns current Epoch
+    // number from: 0
+    // to: 10
+    // epochDuration: 20
+    // resutl -> ~= (10-0)/(20) ~= 0  
+    function lastEpochRelative(uint256 _from, uint256 _to) public view returns (uint256) {
+      // staring block > currentBlock
+      require(_to > _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow");
       return uint256((_to - _from) / epochDuration + 1);
     }
 
     function _setupEpochsReward() internal {
       // Check if epoch setup is needed
-      uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number);
-      uint256 lastEpochId = lastEpochRelative(genesisEpoch, previouslySetEpochRewards);
+      uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number); 
+      
+      uint lastEpochId;
+      if(genesisEpoch != lastEpochInitialized){
+        lastEpochId = lastEpochRelative(genesisEpoch, lastEpochInitialized); // this one
+      }
 
       if (currentEpochId > lastEpochId) {
         // do a for loop and initialize the epochs
@@ -1136,6 +1162,7 @@ contract EPNSCoreV2 is
         
         // assign just the currentEpoch - 1 since currentEpoch rewards can't be distributed
         // rest will default to 0
+
         epochReward[currentEpochId - 1] = pendingRewardsPerEpoch;
         
         // update previously set epoch
@@ -1143,6 +1170,7 @@ contract EPNSCoreV2 is
         previouslySetEpochRewards = PROTOCOL_POOL_FEES;
         lastEpochInitialized = block.number;
       }
+
     }
 
     // uint epoch1Start;
