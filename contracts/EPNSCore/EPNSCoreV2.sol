@@ -977,10 +977,11 @@ contract EPNSCoreV2 is
         return chainId;
     }
 
-    // EXPERIMENTAL ZONE - EPOCH BASED
+    // EXPERIMENTAL ZONE - EPOCH BASED STAKING HARVESTING FUNCTIONS
 
 
     // Stake, Unstake and Harvest
+
     struct UserFessInfo {
       uint256 stakedAmount;
       uint256 stakedWeight;
@@ -992,36 +993,60 @@ contract EPNSCoreV2 is
     }
 
     uint256 public totalStakedWeight;
-    mapping (address => UserFessInfo) public userFeesInfo;
-    mapping(uint256 => uint256) public epochToTotalStakedWeight;
+    uint256 public previouslySetEpochRewards;
 
-    // Epoch Setup and Rewards
-    mapping (uint256 => uint256) public epochReward; // store all the individual epoch rewards
-    uint256 previouslySetEpochRewards;
-
-
-    // for these 3 add setter function
     uint256 public genesisEpoch = block.number;
     uint256 lastEpochInitialized = genesisEpoch;
     uint256 epochDuration = 20 * 7156; // make this a constant, 20 * number of blocks per day is 20 day approx
+
+    mapping (address => UserFessInfo) public userFeesInfo;
+    mapping(uint256 => uint256) public epochToTotalStakedWeight;
+    mapping (uint256 => uint256) public epochReward; // store all the individual epoch rewards
     
-    function tempSetterFunction() external{
-        genesisEpoch = block.number; // blockNummber ?? epoch ??
+    function tempSetterFunction() external{ //@audit-info -> Added coz Hardhat doesn't seem to pick up initialized state data of Line 998 to 1000
+        genesisEpoch = block.number; 
         lastEpochInitialized = genesisEpoch;
         epochDuration = 20 * 7156;
     }
 
+   /**
+     * Owner can add pool_fees at any given time
+     */
+    function addPoolFees(uint256 _rewardAmount) public onlyPushChannelAdmin() {
+        PROTOCOL_POOL_FEES = PROTOCOL_POOL_FEES.add(_rewardAmount);
+    }
+
+    /**
+     * Function to return User's Push Holder weight based on amount being staked & current block number 
+     */
     function _returnPushTokenWeight(address _account, uint _amount, uint _atBlock) internal view returns (uint) {
       return _amount.mul(_atBlock.sub(IPUSH(PUSH_TOKEN_ADDRESS).holderWeight(_account)));
     }
+    
+    /**
+     * Calculates and provides the epoch number based on the from and to block number passed as arguments
+     */
+    function lastEpochRelative(uint256 _from, uint256 _to) public view returns (uint256) {
+      // staring block > currentBlock
+      require(_to > _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow");
+      return uint256((_to - _from) / epochDuration + 1);
+    }
+   /**
+     * Calculates the total claimable rewards for a user at a given Epoch ID
+     * Formulae: (( userStakedWeight of epoch N / totalStakedWeight of epoch N ) * rewards of epoch N )
+     */
+    function calcEpochRewards(uint256 epochId) view public returns (uint256) {
+      return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].div(epochToTotalStakedWeight[epochId]).mul(epochReward[epochId]); //@audit  -> issue coz epochToTotalStakedWeight is not set properly in adjust function
+    }
 
+    /**
+     * Allows users to stake
+     * Records total Amount staked so far by a particular user
+     */
     function stake(uint256 _amount) external {
-      // Check and calculate the weight
+      require(_amount > ADD_CHANNEL_MIN_FEES, "EPNSCoreV2::stake: invalid amount passed");
       uint256 userWeight = _returnPushTokenWeight(msg.sender, _amount, block.number);
-
-      // Transfer token
-      // TO CHECK: safeTransferFrom is not in the ERC20 PUSH contract
-      IERC20(PUSH_TOKEN_ADDRESS).transferFrom(msg.sender, address(this), _amount);
+      IERC20(PUSH_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
 
       // add user amount
       userFeesInfo[msg.sender].stakedAmount = userFeesInfo[msg.sender].stakedAmount + _amount;
@@ -1035,20 +1060,16 @@ contract EPNSCoreV2 is
     function unstake() external {
       // Before unstaking, reset holder weight
       IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
-
-      // TO CHECK: transfer since approval not requried but double check
-      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, userFeesInfo[msg.sender].stakedAmount);
-
       // Also Harvest any rewards
       harvestAll();
-
+      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, userFeesInfo[msg.sender].stakedAmount);
       // Adjust user and total rewards, piggyback method
-      _adjustUserAndTotalStake(msg.sender, -userFeesInfo[msg.sender].stakedWeight);
+      _adjustUserAndTotalStake(msg.sender, 0);
 
       // change staked amount to 0 and lastClaimedBlock to current
       userFeesInfo[msg.sender].stakedAmount = 0;
       userFeesInfo[msg.sender].stakedWeight = 0;
-      userFeesInfo[msg.sender].lastStakedBlock = block.number;
+      // userFeesInfo[msg.sender].lastStakedBlock = block.number; // @audit -> removing this since lastStakedBlock should only be update during stake
       userFeesInfo[msg.sender].lastClaimedBlock = block.number;
     }
 
@@ -1059,103 +1080,103 @@ contract EPNSCoreV2 is
     function harvestTill(uint256 _tillBlockNumber) public {
       // Before harvesting, reset holder weight
       IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
-
-      // Adjust user and total rewards, piggyback method
       _adjustUserAndTotalStake(msg.sender, 0);
 
       // calculate last claimed epoch of user and eligible epochs
       uint256 lastStakedBlock = lastEpochRelative(userFeesInfo[msg.sender].lastStakedBlock, _tillBlockNumber);
       uint256 lastClaimedEpoch = lastEpochRelative(userFeesInfo[msg.sender].lastClaimedBlock, _tillBlockNumber);
-      //uint256 eligibleEpochs = lastEpochRelative(block.number, _tillBlockNumber);
+      //uint256 eligibleEpochs = lastEpochRelative(block.number, _tillBlockNumber); // @audit -> Wrong 
       uint256 currentEpoch = lastEpochRelative(genesisEpoch, _tillBlockNumber);
       
       lastClaimedEpoch = lastClaimedEpoch == currentEpoch ? lastStakedBlock :  lastClaimedEpoch;
 
-      uint256 rewards = 0;
+      // Console Logs if needed
     //   console.log('lastStakedBlock-harvest',lastStakedBlock);
     //   console.log('lastClaimedEpoch-harvest',lastClaimedEpoch);
     //   console.log('currentEpoch-harvest',currentEpoch);
-
+     
+      uint256 rewards = 0;
       for(uint i = lastClaimedEpoch; i < currentEpoch; i++) {
         rewards = rewards.add(calcEpochRewards(i));
       }
+
       usersRewardsClaimed[msg.sender] = usersRewardsClaimed[msg.sender].add(rewards);
-
-
-      // Transfer token
-      // TO CHECK: transfer since approval not requried but double check
-      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
-
       userFeesInfo[msg.sender].lastClaimedBlock = _tillBlockNumber;
-    }
-
-
-    function calcEpochRewards(uint256 epochId) view public returns (uint256) {
-      return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].div(epochToTotalStakedWeight[epochId]).mul(epochReward[epochId]); //@audit  -> issue coz epochToTotalStakedWeight is not set properly in adjust function
+    
+      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
     }
 
     /**
      * calls _setupEpochsReward() to adjust rewards for every epoch till the current epoch
-     * For User's very first stake - Simply update userFeesInfo and totalStakedWeight and lastUpdateBlock-
-     * IF Not the First Stake:
-     *    Check if currentEpoch == lastStakedEpoch -> means user is staking in Same Epoch - Simply increase user's stake and totalStakedWeight
-     *    Else, Adjust user's older stakedWeight a
+     * First Case: User stakes for the very first time - Simply update userFeesInfo, totalStakedWeight and epochToTotalStakedWeight of currentEpoch
+     * 
+     * 2nd Case: User is not staking for first time - 2 Subcases
+     *    2.1 Case: - User is staking for again in the Same Epoch
+     *              - Increase user's stake and totalStakedWeight
+     *              - Record the epochToUserStakedWeight for that epoch
+     *              - Record the epochToTotalStakedWeight of that epoch
+     * 
+     *    2.2 Case: - User is staking for again but in different epoch 
+     *              - Increase user's stake and totalStakedWeight
+     *              - The epochs between currentEpoch and lastStakedEpoch will have user's old staked info
+     *              - Record the epochToUserStakedWeight for the current epoch
+     *              - Record the epochToTotalStakedWeight of the current epoch
      */
     function _adjustUserAndTotalStake(address _user, uint256 _userWeight) internal {
       // setup epoch rewards, piggyback method
       // ensures all epochs are initialized and accounted for
       _setupEpochsReward();
+
        uint256 currentEpoch =  lastEpochRelative(genesisEpoch, block.number);
-       console.log('currentEpoch-',currentEpoch);
-      // Check if the user has not staked, if so, simply initialize
+
+     // First Case: User is staking for first time
       if (userFeesInfo[_user].stakedWeight == 0) {
-        // new stake
+
         userFeesInfo[_user].stakedWeight = _userWeight;
         totalStakedWeight = totalStakedWeight + _userWeight;
         epochToTotalStakedWeight[currentEpoch] = totalStakedWeight;
+        userFeesInfo[_user].epochToUserStakedWeight[currentEpoch] = userFeesInfo[_user].stakedWeight;
+
       } 
       else {
-        // user already has stake, check the current epoch
+        // 2nd: 2.1 Case: User is staking again in SAME Epoch
         uint256 lastStakedEpoch = lastEpochRelative(userFeesInfo[_user].lastStakedBlock, block.number);
-        uint256 totalEpochs = lastEpochRelative(genesisEpoch, block.number);
-        console.log("lastStakedEpoch -",lastStakedEpoch);
-        console.log("totalEpochs - ", totalEpochs);
-        if (totalEpochs == lastStakedEpoch) {// @audit - This statement is not executed even if two stakes are in same epoch - issue lies in line number 1119 while calculating lastStakedEpoch
-          // same epoch
-          console.log("SAME BLOCK CHECK");
+
+        if (currentEpoch == lastStakedEpoch) {
+
           userFeesInfo[_user].stakedWeight = userFeesInfo[_user].stakedWeight + _userWeight;
           totalStakedWeight = totalStakedWeight + _userWeight;
-          epochToTotalStakedWeight[currentEpoch] = totalStakedWeight + _userWeight;
+          epochToTotalStakedWeight[currentEpoch] = totalStakedWeight;
+          userFeesInfo[_user].epochToUserStakedWeight[currentEpoch] = userFeesInfo[_user].stakedWeight;
+
         }
         else {
-          // different epoch is started
-          for(uint i = lastStakedEpoch; i < totalEpochs; i++) {
-            if (i != totalEpochs - 1) {
-              // all epoch but the last one in the loop should have old staked info
+          // 2nd: 2.2 Case: User is staking again but in different epoch
+          for(uint i = lastStakedEpoch; i < currentEpoch; i++) {
+            if (i != currentEpoch - 1) {
               userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
-              epochToTotalStakedWeight[i] = totalStakedWeight;
+              // epochToTotalStakedWeight[i] = totalStakedWeight; //@audit - This shouldn't be here - Check notion for detailed issue
             }
             else {
               // the last of the epoch should have new info
-              userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight + _userWeight;
-              epochToTotalStakedWeight[i] = totalStakedWeight + _userWeight;
+              userFeesInfo[_user].stakedWeight = userFeesInfo[_user].stakedWeight + _userWeight;
+              totalStakedWeight = totalStakedWeight + _userWeight;
+              epochToTotalStakedWeight[currentEpoch] = totalStakedWeight;
+              userFeesInfo[_user].epochToUserStakedWeight[currentEpoch] = userFeesInfo[_user].stakedWeight;
+    
             }
           }
         }
       }
-
       // only run the below logic if amount is getting decreased or increased
       if (_userWeight != 0) {
         userFeesInfo[_user].lastStakedBlock = block.number;
       }
     }
 
-    function lastEpochRelative(uint256 _from, uint256 _to) public view returns (uint256) {
-      // staring block > currentBlock
-      require(_to > _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow");
-      return uint256((_to - _from) / epochDuration + 1);
-    }
-
+    /**
+     * THIS one needs to be discussed - not yet sure of it
+     */
     function _setupEpochsReward() internal {
       // Check if epoch setup is needed
       uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number); 
@@ -1193,9 +1214,5 @@ contract EPNSCoreV2 is
         lastEpochInitialized = block.number;
       }
 
-    }
-
-    function addPoolFees(uint256 _rewardAmount) public onlyPushChannelAdmin() {
-        PROTOCOL_POOL_FEES = PROTOCOL_POOL_FEES.add(_rewardAmount);
     }
 }
