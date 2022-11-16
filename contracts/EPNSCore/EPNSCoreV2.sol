@@ -993,11 +993,14 @@ contract EPNSCoreV2 is
     }
 
     uint256 public totalStakedWeight;
+    uint256 public lastStakedBlock;
+    uint256 public lastTotalStakedBlock = genesisEpoch;
+
     uint256 public previouslySetEpochRewards;
 
     uint256 public genesisEpoch = block.number;
     uint256 lastEpochInitialized = genesisEpoch;
-    uint256 epochDuration = 20 * 7156; // make this a constant, 20 * number of blocks per day is 20 day approx
+    uint256 public epochDuration = 20 * 7156; // make this a constant, 20 * number of blocks per day is 20 day approx
 
     mapping (address => UserFessInfo) public userFeesInfo;
     mapping(uint256 => uint256) public epochToTotalStakedWeight;
@@ -1050,26 +1053,30 @@ contract EPNSCoreV2 is
 
       // add user amount
       userFeesInfo[msg.sender].stakedAmount = userFeesInfo[msg.sender].stakedAmount + _amount;
-      userFeesInfo[msg.sender].lastClaimedBlock =  //@audit -> This was not present earlier -> Why add? -> coz harvest function breakes while calculating lastClaimedEpoch if this line is removed
+      userFeesInfo[msg.sender].lastClaimedBlock =
             userFeesInfo[msg.sender].lastClaimedBlock == 0 ? genesisEpoch : userFeesInfo[msg.sender].lastClaimedBlock;
 
       // Adjust user and total rewards, piggyback method
       _adjustUserAndTotalStake(msg.sender, userWeight);
     }
 
+   /**
+     * Allows users to unStake
+     * Stakers can claim rewards as well as unstake their tokens
+     */
     function unstake() external {
+      require(userFeesInfo[msg.sender].stakedAmount > 0, "EPNSCoreV2::unstake: Caller is not a staker");
       // Before unstaking, reset holder weight
       IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
-      // Also Harvest any rewards
+     
       harvestAll();
       IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, userFeesInfo[msg.sender].stakedAmount);
       // Adjust user and total rewards, piggyback method
-      _adjustUserAndTotalStake(msg.sender, 0);
+      _adjustUserAndTotalStake(msg.sender, -userFeesInfo[msg.sender].stakedWeight);
 
       // change staked amount to 0 and lastClaimedBlock to current
       userFeesInfo[msg.sender].stakedAmount = 0;
       userFeesInfo[msg.sender].stakedWeight = 0;
-      // userFeesInfo[msg.sender].lastStakedBlock = block.number; // @audit -> removing this since lastStakedBlock should only be update during stake
       userFeesInfo[msg.sender].lastClaimedBlock = block.number;
     }
 
@@ -1083,21 +1090,24 @@ contract EPNSCoreV2 is
       _adjustUserAndTotalStake(msg.sender, 0);
 
       // calculate last claimed epoch of user and eligible epochs
-      uint256 lastStakedBlock = lastEpochRelative(userFeesInfo[msg.sender].lastStakedBlock, _tillBlockNumber);
+      uint256 userLastStakedBlock = lastEpochRelative(userFeesInfo[msg.sender].lastStakedBlock, _tillBlockNumber);
       uint256 lastClaimedEpoch = lastEpochRelative(userFeesInfo[msg.sender].lastClaimedBlock, _tillBlockNumber);
-      //uint256 eligibleEpochs = lastEpochRelative(block.number, _tillBlockNumber); // @audit -> Wrong 
       uint256 currentEpoch = lastEpochRelative(genesisEpoch, _tillBlockNumber);
       
-      lastClaimedEpoch = lastClaimedEpoch == currentEpoch ? lastStakedBlock :  lastClaimedEpoch;
+      lastClaimedEpoch = lastClaimedEpoch == currentEpoch ? userLastStakedBlock :  lastClaimedEpoch;
 
       // Console Logs if needed
-    //   console.log('lastStakedBlock-harvest',lastStakedBlock);
+    //   console.log('userLastStakedBlock-harvest',userLastStakedBlock);
     //   console.log('lastClaimedEpoch-harvest',lastClaimedEpoch);
     //   console.log('currentEpoch-harvest',currentEpoch);
      
       uint256 rewards = 0;
       for(uint i = lastClaimedEpoch; i < currentEpoch; i++) {
-        rewards = rewards.add(calcEpochRewards(i));
+        if(epochToTotalStakedWeight[i] == 0){ //@audit - Its possible and intended that some epochs might not have any reward and hence the epochTotalStakedWeight might also be zero -> This if statement skips those epochs to avioid Dvision by zero error
+            continue;
+        }else{
+            rewards = rewards.add(calcEpochRewards(i));
+        }
       }
 
       usersRewardsClaimed[msg.sender] = usersRewardsClaimed[msg.sender].add(rewards);
@@ -1134,9 +1144,6 @@ contract EPNSCoreV2 is
 
         userFeesInfo[_user].stakedWeight = _userWeight;
         totalStakedWeight = totalStakedWeight + _userWeight;
-        epochToTotalStakedWeight[currentEpoch] = totalStakedWeight;
-        userFeesInfo[_user].epochToUserStakedWeight[currentEpoch] = userFeesInfo[_user].stakedWeight;
-
       } 
       else {
         // 2nd: 2.1 Case: User is staking again in SAME Epoch
@@ -1146,16 +1153,18 @@ contract EPNSCoreV2 is
 
           userFeesInfo[_user].stakedWeight = userFeesInfo[_user].stakedWeight + _userWeight;
           totalStakedWeight = totalStakedWeight + _userWeight;
-          epochToTotalStakedWeight[currentEpoch] = totalStakedWeight;
-          userFeesInfo[_user].epochToUserStakedWeight[currentEpoch] = userFeesInfo[_user].stakedWeight;
-
         }
         else {
           // 2nd: 2.2 Case: User is staking again but in different epoch
+          uint256 lastTotalStakedEpoch = lastEpochRelative(lastTotalStakedBlock, block.number);
+
           for(uint i = lastStakedEpoch; i < currentEpoch; i++) {
             if (i != currentEpoch - 1) {
-              userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
-              // epochToTotalStakedWeight[i] = totalStakedWeight; //@audit - This shouldn't be here - Check notion for detailed issue
+                userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
+                
+                if (i > lastTotalStakedEpoch) {
+                    epochToTotalStakedWeight[i] = totalStakedWeight; 
+                }   
             }
             else {
               // the last of the epoch should have new info
@@ -1171,48 +1180,37 @@ contract EPNSCoreV2 is
       // only run the below logic if amount is getting decreased or increased
       if (_userWeight != 0) {
         userFeesInfo[_user].lastStakedBlock = block.number;
+        lastTotalStakedBlock = block.number;
       }
     }
 
     /**
      * THIS one needs to be discussed - not yet sure of it
      */
-    function _setupEpochsReward() internal {
+     function _setupEpochsReward() internal {
       // Check if epoch setup is needed
-      uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number); 
-
-      uint lastEpochId;
-      if(genesisEpoch != lastEpochInitialized){
-        lastEpochId = lastEpochRelative(genesisEpoch, lastEpochInitialized);
-        console.log('\nlastEpochId-setUp',lastEpochId);
-        console.log('currentEpochId-setUp',currentEpochId);
-      }
-
+      uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number);
+      uint256 lastEpochId = lastEpochRelative(lastEpochInitialized, block.number);
+       console.log("genesisEpoch-",genesisEpoch);
+       console.log("currentBlock-",block.number);
       if (currentEpochId > lastEpochId) {
-        uint256 pendingRewards = (PROTOCOL_POOL_FEES - previouslySetEpochRewards);
-        uint256 pendingRewardsPerEpoch = pendingRewards.div(currentEpochId.sub(lastEpochId));
-       
-        // console.log('PROTOCOL_POOL_FEES',PROTOCOL_POOL_FEES);
-        // console.log('previouslySetEpochRewards',previouslySetEpochRewards);
-        // console.log('pendingRewards',pendingRewards);
-        // console.log('pendingRewardsPerEpoch',pendingRewardsPerEpoch);
-       
+        // TODO: REPLACE PROTOCOL_POOL_FEES
+        uint256 pendingRewardsPerEpoch = (PROTOCOL_POOL_FEES - previouslySetEpochRewards);
         
-        for(uint256 i = lastEpochId; i <= currentEpochId-1; i++){
-            epochReward[i] = pendingRewardsPerEpoch;
-        }
-        // epochReward[5] = 3;
-        // epochReward[6] = 3;
-        // epochReward[7] = 3;
-        // epochReward[8] = 3;
-        // epochReward[9] = 3;
-        // epochReward[10] = 3;
-        // epochReward[11] = 3;
+        // assign just the currentEpoch - 1 since currentEpoch rewards can't be distributed
+        // rest will default to 0
+        epochReward[currentEpochId - 1] = pendingRewardsPerEpoch;
+        
         // update previously set epoch
         // TODO: REPLACE PROTOCOL_POOL_FEES
         previouslySetEpochRewards = PROTOCOL_POOL_FEES;
         lastEpochInitialized = block.number;
       }
-
     }
 }
+
+// @audit-info -> LIST OF Pending Items
+// @audit ->  Add initializer -> initiaizes important state variables -> Add 1 push to handle edge case scneario of calculate epoch rewards
+// @audit ->  Divided pool fees to user and wallet pools - Include pool ratio 
+// @audit ->  ensure the data can be constructed from frontend for a user who wants to see their rewards
+// @audit ->  Test the entire thing 
