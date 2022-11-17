@@ -225,6 +225,15 @@ describe("EPNS CoreV2 Protocol", function () {
       );
     };
 
+    const getRewardsOfEpoch = async(totalEpochs) =>{
+      for(i = 1; i <= totalEpochs; i++){
+        var reward = await EPNSCoreV1Proxy.checkEpochReward(i);
+        var epochToTotalWeight = await EPNSCoreV1Proxy.epochToTotalStakedWeight(i);
+        console.log(`Rewards for EPOCH ID ${i} is ${reward}`)
+        console.log(`EPOCH for EPOCH ID ${i} is ${epochToTotalWeight}`)
+      }
+    }
+
     // TEST CASES BEGINS //
 
     describe.skip("🟢 Staking Tests ", function()
@@ -345,6 +354,24 @@ describe("EPNS CoreV2 Protocol", function () {
 
     describe("🟢 Reward Calculation and Harvesting Tests", function()
     {
+      it("Basic TEMP Test - Simple Stake, Unstake should work as expected - User Should get rewards ", async function(){
+        // Set pool fee and initiate stake epoch
+        await EPNSCoreV1Proxy.connect(ADMINSIGNER).tempSetterFunction();
+        const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
+       
+        await passBlockNumers(5*EPOCH_DURATION)
+        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+        await stakePushTokens(BOBSIGNER, tokensBN(100));
+        
+        await passBlockNumers(2 * EPOCH_DURATION);
+        const tx_bob = await EPNSCoreV1Proxy.connect(BOBSIGNER).unstake();
+        
+        const bobClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(BOB);
+        console.log(`Bob Claimed ${bobClaim_after.toString()} tokens at Block number ${tx_bob.blockNumber}`);
+        
+        await expect(bobClaim_after).to.be.gt(0);
+        
+    })
       /***
      * Case:
      * 4 Stakers stake 100 Tokens and each of them try to claim after 1 complete epoch of the previous staker
@@ -352,30 +379,30 @@ describe("EPNS CoreV2 Protocol", function () {
      */
     it("First Claim: Stakers who hold more should get more Reward", async function(){
         // Set pool fee and initiate stake epoch
-        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await EPNSCoreV1Proxy.connect(ADMINSIGNER).tempSetterFunction();
-
         const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
+       
         await passBlockNumers(5*EPOCH_DURATION)
-        var currentBlock = await ethers.provider.getBlock("latest");
-        //const currentEpoch = await EPNSCoreV1Proxy.lastEpochRelative(genesisEpoch, currentBlock.number);
-        // stake
-
+        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(BOBSIGNER, tokensBN(100));
         
+      
         await passBlockNumers(10*EPOCH_DURATION);
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(ALICESIGNER, tokensBN(100));
-        
-        await passBlockNumers(12*EPOCH_DURATION);
+
+
+        await passBlockNumers(10*EPOCH_DURATION);
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(CHARLIESIGNER, tokensBN(100));
         
-        await passBlockNumers(14*EPOCH_DURATION);
+
+        await passBlockNumers(10*EPOCH_DURATION);
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(CHANNEL_CREATORSIGNER, tokensBN(100));
 
-        await passBlockNumers(20*EPOCH_DURATION);
+
+        await passBlockNumers(2 * EPOCH_DURATION);
         const tx_bob = await EPNSCoreV1Proxy.connect(BOBSIGNER).unstake();
         const tx_alice = await EPNSCoreV1Proxy.connect(ALICESIGNER).unstake();
         const tx_charlie = await EPNSCoreV1Proxy.connect(CHARLIESIGNER).unstake();
@@ -386,17 +413,17 @@ describe("EPNS CoreV2 Protocol", function () {
         const charlieClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(CHARLIE);
         const channelCreatorClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(CHANNEL_CREATOR);
 
-        // Logs if needed
-        console.log("First Claim")
+        // // Logs if needed
+        // console.log("First Claim")
         console.log(`Bob Claimed ${bobClaim_after.toString()} tokens at Block number ${tx_bob.blockNumber}`);
         console.log(`Alice Claimed ${aliceClaim_after.toString()} tokens at Block number ${tx_alice.blockNumber}`);
         console.log(`Charlie Claimed ${charlieClaim_after.toString()} tokens at Block number ${tx_charlie.blockNumber}`);
         console.log(`ChannelCreator Claimed ${channelCreatorClaim_after.toString()} tokens at Block number ${tx_channelCreator.blockNumber}`);
-        
+
         // Verify rewards of ChannelCreator > Charlie > Alice > BOB
-        // expect(aliceClaim_after).to.be.gt(bobClaim_after);
-        // expect(charlieClaim_after).to.be.gt(aliceClaim_after);
-        // expect(channelCreatorClaim_after).to.be.gt(charlieClaim_after);
+        expect(aliceClaim_after).to.be.gt(bobClaim_after);
+        expect(charlieClaim_after).to.be.gt(aliceClaim_after);
+        expect(channelCreatorClaim_after).to.be.gt(charlieClaim_after);
     })
 
     it.skip("Equal rewards should be distributed to Users after Stake Epoch End", async function(){
