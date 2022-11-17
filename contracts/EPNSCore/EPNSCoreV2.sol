@@ -1072,6 +1072,7 @@ contract EPNSCoreV2 is
       harvestAll();
       IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, userFeesInfo[msg.sender].stakedAmount);
       // Adjust user and total rewards, piggyback method
+
       _adjustUserAndTotalStake(msg.sender, -userFeesInfo[msg.sender].stakedWeight);
 
       // change staked amount to 0 and lastClaimedBlock to current
@@ -1095,12 +1096,6 @@ contract EPNSCoreV2 is
       uint256 currentEpoch = lastEpochRelative(genesisEpoch, _tillBlockNumber);
       
       lastClaimedEpoch = lastClaimedEpoch == currentEpoch ? userLastStakedBlock :  lastClaimedEpoch;
-
-      // Console Logs if needed
-    //   console.log('userLastStakedBlock-harvest',userLastStakedBlock);
-    //   console.log('lastClaimedEpoch-harvest',lastClaimedEpoch);
-    //   console.log('currentEpoch-harvest',currentEpoch);
-     
       uint256 rewards = 0;
       for(uint i = lastClaimedEpoch; i < currentEpoch; i++) {
         if(epochToTotalStakedWeight[i] == 0){ //@audit - Its possible and intended that some epochs might not have any reward and hence the epochTotalStakedWeight might also be zero -> This if statement skips those epochs to avioid Dvision by zero error
@@ -1136,7 +1131,7 @@ contract EPNSCoreV2 is
       // setup epoch rewards, piggyback method
       // ensures all epochs are initialized and accounted for
       _setupEpochsReward();
-
+       
        uint256 currentEpoch =  lastEpochRelative(genesisEpoch, block.number);
 
      // First Case: User is staking for first time
@@ -1187,26 +1182,28 @@ contract EPNSCoreV2 is
     /**
      * THIS one needs to be discussed - not yet sure of it
      */
-     function _setupEpochsReward() internal {
-      // Check if epoch setup is needed
-      uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number);
-      uint256 lastEpochId = lastEpochRelative(lastEpochInitialized, block.number);
-       console.log("genesisEpoch-",genesisEpoch);
-       console.log("currentBlock-",block.number);
-      if (currentEpochId > lastEpochId) {
-        // TODO: REPLACE PROTOCOL_POOL_FEES
-        uint256 pendingRewardsPerEpoch = (PROTOCOL_POOL_FEES - previouslySetEpochRewards);
-        
-        // assign just the currentEpoch - 1 since currentEpoch rewards can't be distributed
-        // rest will default to 0
-        epochReward[currentEpochId - 1] = pendingRewardsPerEpoch;
-        
-        // update previously set epoch
-        // TODO: REPLACE PROTOCOL_POOL_FEES
-        previouslySetEpochRewards = PROTOCOL_POOL_FEES;
-        lastEpochInitialized = block.number;
-      }
+    function _setupEpochsReward() internal {
+    // Check if epoch setup is needed
+    uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number);
+    uint256 lastEpochId = 0;
+
+    if(lastEpochInitialized == block.number){
+        lastEpochId =  currentEpochId;
+    }else{
+        lastEpochId = lastEpochRelative(lastEpochInitialized, block.number);
     }
+    
+    lastEpochId = lastEpochId == currentEpochId ? 0 : lastEpochId;
+    if (currentEpochId > lastEpochId) {
+    
+    uint256 pendingRewardsPerEpoch = (PROTOCOL_POOL_FEES - previouslySetEpochRewards);
+    
+    epochReward[currentEpochId - 1] = pendingRewardsPerEpoch;
+
+    previouslySetEpochRewards = PROTOCOL_POOL_FEES;
+    lastEpochInitialized = block.number;
+    }
+ }
 }
 
 // @audit-info -> LIST OF Pending Items
