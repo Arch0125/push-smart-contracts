@@ -993,8 +993,7 @@ contract EPNSCoreV2 is
     }
 
     uint256 public totalStakedWeight;
-    uint256 public lastStakedBlock;
-    uint256 public lastTotalStakedBlock = genesisEpoch;
+    uint256 public lastTotalStakedBlock;
 
     uint256 public previouslySetEpochRewards;
 
@@ -1006,12 +1005,6 @@ contract EPNSCoreV2 is
     mapping(uint256 => uint256) public epochToTotalStakedWeight;
     mapping (uint256 => uint256) public epochReward; // store all the individual epoch rewards
     
-    function tempSetterFunction() external{ //@audit-info -> Added coz Hardhat doesn't seem to pick up initialized state data of Line 998 to 1000
-        genesisEpoch = block.number; 
-        lastEpochInitialized = genesisEpoch;
-        epochDuration = 20 * 7156;
-    }
-
    /**
      * Owner can add pool_fees at any given time
      */
@@ -1031,25 +1024,27 @@ contract EPNSCoreV2 is
      */
     function lastEpochRelative(uint256 _from, uint256 _to) public view returns (uint256) {
       // staring block > currentBlock
-      require(_to > _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow");
+      // require(_to > _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow"); //@audit : Leads to error if _to is supposed to be strictly greater than from - Issue comes during initializeStake() coz genesisEpoch is initialized at that point.  
+      require(_to >= _from, "EPNSCoreV2::lastEpochRelative: relative blocknumber overflow");
       return uint256((_to - _from) / epochDuration + 1);
     }
    /**
      * Calculates the total claimable rewards for a user at a given Epoch ID
      * Formulae: (( userStakedWeight of epoch N / totalStakedWeight of epoch N ) * rewards of epoch N )
      */
-    function calcEpochRewards(uint256 epochId) view public returns (uint256) {
-        // Temp Solution - If for any Epoch ID epochToTotalStakedWeight is zero but epochReward is non-zero, We set epochToTotalStakedWeight to be 1.
 
-        uint256 _epochToTotalStakedWeight = epochToTotalStakedWeight[epochId] == 0 ? 1e18 : epochToTotalStakedWeight[epochId];
-        return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].div(_epochToTotalStakedWeight).mul(epochReward[epochId]); //@audit  -> issue coz epochToTotalStakedWeight is not set properly in adjust function
+    function calcEpochRewards(uint256 epochId) view public returns (uint256) {
+        uint256 epochToTotalWeight = epochToTotalStakedWeight[epochId] == 0 ? userFeesInfo[address(this)].stakedWeight : epochToTotalStakedWeight[epochId];
+        return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].mul(epochReward[epochId]).div(epochToTotalWeight); 
+        //return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].div(_epochToTotalStakedWeight).mul(epochReward[epochId]); //@audit  -> Wrong: Should be userStakedWeight.mul(epochRewards).div(epochToTotalWeight)
     }
 
     function initializeStake() external{
         require(genesisEpoch == 0, "EPNSCoreV2::initializeStake: Already Initialized");
         genesisEpoch = block.number; 
-        lastEpochInitialized = genesisEpoch;
         epochDuration = 20 * 7156;
+        lastEpochInitialized = genesisEpoch;
+        lastTotalStakedBlock = genesisEpoch;
 
         IERC20(PUSH_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), 1e18);
         _stake(address(this), 1e18);
@@ -1060,14 +1055,13 @@ contract EPNSCoreV2 is
      * Records total Amount staked so far by a particular user
      */
     function stake(uint256 _amount) external {
-      require(_amount > ADD_CHANNEL_MIN_FEES, "EPNSCoreV2::stake: invalid amount passed");
-      IERC20(PUSH_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
       _stake(msg.sender, _amount);
     }
 
     function _stake(address _staker, uint256 _amount) private {
       uint256 userWeight = _returnPushTokenWeight(_staker, _amount, block.number);
-    
+      IERC20(PUSH_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _amount);
+
       userFeesInfo[_staker].stakedAmount = userFeesInfo[_staker].stakedAmount + _amount;
       userFeesInfo[_staker].lastClaimedBlock =
             userFeesInfo[_staker].lastClaimedBlock == 0 ? genesisEpoch : userFeesInfo[_staker].lastClaimedBlock;
@@ -1107,19 +1101,52 @@ contract EPNSCoreV2 is
       _adjustUserAndTotalStake(msg.sender, 0);
 
       // calculate last claimed epoch of user and eligible epochs
-      uint256 userLastStakedBlock = lastEpochRelative(userFeesInfo[msg.sender].lastStakedBlock, _tillBlockNumber);
-      uint256 lastClaimedEpoch = lastEpochRelative(userFeesInfo[msg.sender].lastClaimedBlock, _tillBlockNumber);
+    //   uint256 userLastStakedBlock = lastEpochRelative(userFeesInfo[msg.sender].lastStakedBlock, _tillBlockNumber); // @audit - lastEpochRelative issue: should be counted from genesisEpoch to lastStakedBlock of user
+    //   uint256 lastClaimedEpoch = lastEpochRelative(userFeesInfo[msg.sender].lastClaimedBlock, _tillBlockNumber);   // @audit - lastEpochRelative issue: should be counted from genesisEpoch to lastClaimedBlock of user
+      uint256 userLastStakedBlock = lastEpochRelative(genesisEpoch, userFeesInfo[msg.sender].lastStakedBlock); 
+      uint256 lastClaimedEpoch = lastEpochRelative(genesisEpoch, userFeesInfo[msg.sender].lastClaimedBlock);
+      
       uint256 currentEpoch = lastEpochRelative(genesisEpoch, _tillBlockNumber);
       
       lastClaimedEpoch = lastClaimedEpoch == currentEpoch ? userLastStakedBlock :  lastClaimedEpoch;
       uint256 rewards = 0;
       for(uint i = lastClaimedEpoch; i < currentEpoch; i++) {
+            uint256 claimableReward = calcEpochRewards(i);
+            rewards = rewards.add(calcEpochRewards(i));
+            
+            // console.log("\n CHECKS");
+            // console.log('USER STAKED WEIGHT of User for EPOCH', i, "is equal to - ", userFeesInfo[msg.sender].epochToUserStakedWeight[i]);
+            // console.log('TOTAL STAKED WEIGHT of User for EPOCH', i, "is equal to - ", epochToTotalStakedWeight[i]);
+            // console.log('TOTAL REWARD stored for EPOCH', i, "is equal to - ", epochReward[i]);
+            // console.log('Reward of User for EPOCH', i, "is equal to - ", rewards);
+
+      }
+      usersRewardsClaimed[msg.sender] = usersRewardsClaimed[msg.sender].add(rewards);
+      userFeesInfo[msg.sender].lastClaimedBlock = _tillBlockNumber;
+
+      console.log("\nTOTAL REWARDS FOR STAKER: ", usersRewardsClaimed[msg.sender]);
+      //IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
+    }
+
+    function daoHarvest() external onlyPushChannelAdmin(){
+        uint256 weightContract = userFeesInfo[address(this)].stakedWeight;
+        console.log("STAKED Weight =", weightContract);
+       IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
+      _adjustUserAndTotalStake(address(this), 0);
+
+      uint256 userLastStakedBlock = lastEpochRelative(genesisEpoch, userFeesInfo[address(this)].lastStakedBlock); 
+      uint256 lastClaimedEpoch = lastEpochRelative(genesisEpoch, userFeesInfo[address(this)].lastClaimedBlock);
+      uint256 currentEpoch = lastEpochRelative(genesisEpoch, block.number);
+
+     lastClaimedEpoch = lastClaimedEpoch == currentEpoch ? userLastStakedBlock :  lastClaimedEpoch;
+      uint256 rewards = 0;
+      for(uint i = lastClaimedEpoch; i < currentEpoch; i++) {
             rewards = rewards.add(calcEpochRewards(i));
       }
 
-      usersRewardsClaimed[msg.sender] = usersRewardsClaimed[msg.sender].add(rewards);
-      userFeesInfo[msg.sender].lastClaimedBlock = _tillBlockNumber;
-      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
+      usersRewardsClaimed[address(this)] = usersRewardsClaimed[address(this)].add(rewards);
+      userFeesInfo[address(this)].lastClaimedBlock = block.number;
+      console.log("\nTotal Rewards of DAO", usersRewardsClaimed[address(this)]);
     }
 
     /**
@@ -1143,6 +1170,7 @@ contract EPNSCoreV2 is
       // ensures all epochs are initialized and accounted for
       _setupEpochsReward();
        uint256 currentEpoch =  lastEpochRelative(genesisEpoch, block.number);
+
      // First Case: User is staking for first time
       if (userFeesInfo[_user].stakedWeight == 0) {
         userFeesInfo[_user].stakedWeight = _userWeight;
@@ -1150,29 +1178,35 @@ contract EPNSCoreV2 is
       } 
       else {
         // 2nd: 2.1 Case: User is staking again in SAME Epoch
-        uint256 lastStakedEpoch = lastEpochRelative(userFeesInfo[_user].lastStakedBlock, block.number);
-
+        //uint256 lastStakedEpoch = lastEpochRelative(userFeesInfo[_user].lastStakedBlock, block.number); // @audit -> Wrong: Gives lastStakedEpoch as 3 while its actually was 6. Should be calculated from genesisEpoch to user or totalLastEpoch
+        uint256 lastStakedEpoch = lastEpochRelative(genesisEpoch, userFeesInfo[_user].lastStakedBlock);
+       
         if (currentEpoch == lastStakedEpoch) {
           userFeesInfo[_user].stakedWeight = userFeesInfo[_user].stakedWeight + _userWeight;
           totalStakedWeight = totalStakedWeight + _userWeight;
         }
         else {
           // 2nd: 2.2 Case: User is staking again but in different epoch
-          uint256 lastTotalStakedEpoch = lastEpochRelative(lastTotalStakedBlock, block.number);
-          for(uint i = lastStakedEpoch; i < currentEpoch; i++) {
+          // uint256 _lastTotalStakedEpoch = lastEpochRelative(lastTotalStakedBlock, block.number); // @audit -> Wrong: Gives lastStakedEpoch as 3 while its actually was 6. Should be calculated from genesisEpoch to user or totalLastEpoch 
+          uint256 _lastTotalStakedEpoch = lastEpochRelative(genesisEpoch, lastTotalStakedBlock);
+
+          for(uint i = lastStakedEpoch - 1; i < currentEpoch; i++) {
             if (i != currentEpoch - 1) {
                 userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
                 
-                if (i > lastTotalStakedEpoch) {
+                if(epochToTotalStakedWeight[i] == 0 ){
                     epochToTotalStakedWeight[i] = totalStakedWeight; 
                 }
+                // if (i >= _lastTotalStakedEpoch) { //@audit : changed > to >=
+                //     epochToTotalStakedWeight[i] = totalStakedWeight; 
+                // }
             }
             else {
               // the last of the epoch should have new info
               userFeesInfo[_user].stakedWeight = userFeesInfo[_user].stakedWeight + _userWeight;
               totalStakedWeight = totalStakedWeight + _userWeight;
-              epochToTotalStakedWeight[currentEpoch] = totalStakedWeight;
-              userFeesInfo[_user].epochToUserStakedWeight[currentEpoch] = userFeesInfo[_user].stakedWeight;
+              epochToTotalStakedWeight[i] = totalStakedWeight;
+              userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
     
             }
           }
@@ -1204,7 +1238,8 @@ contract EPNSCoreV2 is
     
     uint256 pendingRewardsPerEpoch = (PROTOCOL_POOL_FEES - previouslySetEpochRewards);
     
-    epochReward[currentEpochId - 1] = pendingRewardsPerEpoch;
+    epochReward[currentEpochId - 1] = pendingRewardsPerEpoch; // @audit - we store rewards in previous epoch but userStakedWeight in currentEpoch
+    // epochReward[currentEpochId ] = pendingRewardsPerEpoch;
 
     previouslySetEpochRewards = PROTOCOL_POOL_FEES;
     lastEpochInitialized = block.number;
