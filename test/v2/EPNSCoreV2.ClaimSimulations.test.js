@@ -111,10 +111,10 @@ describe("EPNS CoreV2 Protocol", function () {
         EPNSCoreV1Proxy.address
       );
 
-      await PushToken.transfer(
-        EPNSCoreV1Proxy.address,
-        ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(10)
-      );
+      // await PushToken.transfer(
+      //   EPNSCoreV1Proxy.address,
+      //   ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(10)
+      // );
       await PushToken.transfer(
         BOB,
         ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(10000)
@@ -267,7 +267,7 @@ describe("EPNS CoreV2 Protocol", function () {
 
       })
 
-      it("First Stake: should update user's stake details accurately",async()=>{
+      it.skip("First Stake: should update user's stake details accurately",async()=>{
         // Set pool fee and initiate stake epoch
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
@@ -368,13 +368,13 @@ describe("EPNS CoreV2 Protocol", function () {
         const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
         
         await passBlockNumers(5*EPOCH_DURATION)
+
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(BOBSIGNER, tokensBN(100));
 
         await passBlockNumers(2 * EPOCH_DURATION);
-
-        const tx_bob = await EPNSCoreV1Proxy.connect(BOBSIGNER).unstake();
         
+        const tx_bob = await EPNSCoreV1Proxy.connect(BOBSIGNER).unstake();
         const bobClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(BOB);
         // console.log(`Bob Claimed ${bobClaim_after.toString()} tokens at Block number ${tx_bob.blockNumber}`);
 
@@ -400,14 +400,12 @@ describe("EPNS CoreV2 Protocol", function () {
         const tx_alice = await EPNSCoreV1Proxy.connect(ALICESIGNER).unstake();
         const tx_channelCreator = await EPNSCoreV1Proxy.connect(CHANNEL_CREATORSIGNER).unstake();
   
-      //   const userData = await EPNSCoreV1Proxy.userFeesInfo(BOB);
-      //   // console.log('USER BOB LAST STAKED BLOCK ',userData.lastStakedBlock.toString());
-      const bobClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(BOB);
-      const aliceClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(ALICE);
-      const channelCreatorClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(CHANNEL_CREATOR);
+        const bobClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(BOB);
+        const aliceClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(ALICE);
+        const channelCreatorClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(CHANNEL_CREATOR);
 
       // perPersonShare = ( totalPoolFees ).div(total Stakers)
-      const perPersonShare = ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5).div(3);
+        const perPersonShare = ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5).div(3);
   
       // console.log(`Bob Claimed ${bobClaim_after.toString()} tokens at Block number ${tx_bob.blockNumber}`);
       // console.log(`Alice Claimed ${aliceClaim_after.toString()} tokens at Block number ${tx_alice.blockNumber}`);
@@ -439,12 +437,12 @@ describe("EPNS CoreV2 Protocol", function () {
 
 
         await passBlockNumers(3*EPOCH_DURATION);
-       //  await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(CHARLIESIGNER, tokensBN(100));
         
 
         await passBlockNumers(4*EPOCH_DURATION);
-        //await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(CHANNEL_CREATORSIGNER, tokensBN(100));
 
 

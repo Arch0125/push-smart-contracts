@@ -1009,6 +1009,7 @@ contract EPNSCoreV2 is
      * Owner can add pool_fees at any given time
      */
     function addPoolFees(uint256 _rewardAmount) public onlyPushChannelAdmin() {
+        IERC20(PUSH_TOKEN_ADDRESS).safeTransferFrom(msg.sender, address(this), _rewardAmount);
         PROTOCOL_POOL_FEES = PROTOCOL_POOL_FEES.add(_rewardAmount);
     }
 
@@ -1123,10 +1124,10 @@ contract EPNSCoreV2 is
       }
       usersRewardsClaimed[msg.sender] = usersRewardsClaimed[msg.sender].add(rewards);
       userFeesInfo[msg.sender].lastClaimedBlock = _tillBlockNumber;
-      //IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
+      IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
     }
 
-    function daoHarvest() external onlyPushChannelAdmin(){
+    function daoHarvest() external onlyPushChannelAdmin(){ //@audit-info - Need to be reviewed - JUST A TEMP Func
         uint256 weightContract = userFeesInfo[address(this)].stakedWeight;
        IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
       _adjustUserAndTotalStake(address(this), 0);
@@ -1187,14 +1188,14 @@ contract EPNSCoreV2 is
           // uint256 _lastTotalStakedEpoch = lastEpochRelative(lastTotalStakedBlock, block.number); // @audit -> Wrong: Gives lastStakedEpoch as 3 while its actually was 6. Should be calculated from genesisEpoch to user or totalLastEpoch 
           uint256 _lastTotalStakedEpoch = lastEpochRelative(genesisEpoch, lastTotalStakedBlock);
 
-          for(uint i = lastStakedEpoch - 1; i < currentEpoch; i++) {
+          for(uint i = lastStakedEpoch - 1; i < currentEpoch; i++) { // @audit -> "uint i = lastStakedEpoch" changed to "uint i = lastStakedEpoch -1"
             if (i != currentEpoch - 1) {
                 userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
                 
-                if(epochToTotalStakedWeight[i] == 0 ){
+                if(epochToTotalStakedWeight[i] == 0 ){ //@audit : New Addition - Updates epochToTotalStakedWeight if its still zero
                     epochToTotalStakedWeight[i] = totalStakedWeight; 
                 }
-                // if (i >= _lastTotalStakedEpoch) { //@audit : changed > to >=
+                // if (i >= _lastTotalStakedEpoch) { //@audit : changed > to >= -> REMOVED 
                 //     epochToTotalStakedWeight[i] = totalStakedWeight; 
                 // }
             }
@@ -1223,8 +1224,6 @@ contract EPNSCoreV2 is
     // Check if epoch setup is needed
     uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number);
     uint256 lastEpochId = lastEpochRelative(genesisEpoch, lastEpochInitialized);
-
-    // console.log("CURRENT EPOCH is ", currentEpochId, "But LAST EPOCH ID is", lastEpochId);
 
     if (currentEpochId > lastEpochId) {
     
