@@ -1041,8 +1041,8 @@ contract EPNSCoreV2 is
     function calcEpochRewards(uint256 epochId) view public returns (uint256) {
         // Temp Solution - If for any Epoch ID epochToTotalStakedWeight is zero but epochReward is non-zero, We set epochToTotalStakedWeight to be 1.
 
-        uint256 _epochToTotalStakedWeight = epochToTotalStakedWeight[epochId] == 0 ? 1e18 : epochToTotalStakedWeight[epochId];
-        return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].div(_epochToTotalStakedWeight).mul(epochReward[epochId]); //@audit  -> issue coz epochToTotalStakedWeight is not set properly in adjust function
+        //uint256 _epochToTotalStakedWeight = epochToTotalStakedWeight[epochId] == 0 ? 1e18 : epochToTotalStakedWeight[epochId];
+        return userFeesInfo[msg.sender].epochToUserStakedWeight[epochId].div(epochToTotalStakedWeight[epochId]).mul(epochReward[epochId]); //@audit  -> issue coz epochToTotalStakedWeight is not set properly in adjust function
     }
 
     function initializeStake() external{
@@ -1171,8 +1171,8 @@ contract EPNSCoreV2 is
               // the last of the epoch should have new info
               userFeesInfo[_user].stakedWeight = userFeesInfo[_user].stakedWeight + _userWeight;
               totalStakedWeight = totalStakedWeight + _userWeight;
-              epochToTotalStakedWeight[currentEpoch] = totalStakedWeight;
-              userFeesInfo[_user].epochToUserStakedWeight[currentEpoch] = userFeesInfo[_user].stakedWeight;
+              epochToTotalStakedWeight[i] = totalStakedWeight;
+              userFeesInfo[_user].epochToUserStakedWeight[i] = userFeesInfo[_user].stakedWeight;
     
             }
           }
