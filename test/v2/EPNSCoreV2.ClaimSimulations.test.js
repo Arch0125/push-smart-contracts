@@ -249,7 +249,7 @@ describe("EPNS CoreV2 Protocol", function () {
       it("First: Basic Stake and Harvest",async()=>{
         // Set pool fee and initiate stake epoch
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
-        await EPNSCoreV1Proxy.connect(ADMINSIGNER).tempSetterFunction();
+        await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
 
         await passBlockNumers(5*EPOCH_DURATION)
         // stake
@@ -270,7 +270,7 @@ describe("EPNS CoreV2 Protocol", function () {
       it("First Stake: should update user's stake details accurately",async()=>{
         // Set pool fee and initiate stake epoch
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
-        await EPNSCoreV1Proxy.connect(ADMINSIGNER).tempSetterFunction();
+        await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
 
         const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
         await passBlockNumers(5*EPOCH_DURATION)
@@ -296,7 +296,7 @@ describe("EPNS CoreV2 Protocol", function () {
       it("Consecutive Stake: In same epoch should update user's stake details accurately",async()=>{
           // Set pool fee and initiate stake epoch
           await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(2));
-          await EPNSCoreV1Proxy.connect(ADMINSIGNER).tempSetterFunction();
+          await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
 
           const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
           await passBlockNumers(5*EPOCH_DURATION)
@@ -331,7 +331,7 @@ describe("EPNS CoreV2 Protocol", function () {
       it("Consecutive Stake: In Different epochs should update user's stake details accurately",async()=>{
         // Set pool fee and initiate stake epoch
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
-        await EPNSCoreV1Proxy.connect(ADMINSIGNER).tempSetterFunction();
+        await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
 
         const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
         await passBlockNumers(5*EPOCH_DURATION)
@@ -362,56 +362,61 @@ describe("EPNS CoreV2 Protocol", function () {
 
     describe("🟢 Reward Calculation and Harvesting Tests", function()
     {
-      it.skip("Basic TEMP Test - Simple Stake, Unstake should work as expected - User Should get rewards ", async function(){
+      it("Initial Test - Bob stakes, unstakes 100 tokens , should receive Non-Zero Reward Value", async function(){
         // Set pool fee and initiate stake epoch
-        const lastTotal_1st = await EPNSCoreV1Proxy.lastTotalStakedBlock();
         await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
         const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
         
-        const lastTotal_2nd = await EPNSCoreV1Proxy.lastTotalStakedBlock();
-       
-        // const totalStakedWeight_1 = await EPNSCoreV1Proxy.totalStakedWeight();
-        // console.log("Total Staked weight after initializeStake()", totalStakedWeight_1.toString());
-
         await passBlockNumers(5*EPOCH_DURATION)
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
-        const stakedBlock = await stakePushTokens(BOBSIGNER, tokensBN(100));
+        await stakePushTokens(BOBSIGNER, tokensBN(100));
+
+        await passBlockNumers(2 * EPOCH_DURATION);
+
+        const tx_bob = await EPNSCoreV1Proxy.connect(BOBSIGNER).unstake();
         
-        const lastTotal_3rd = await EPNSCoreV1Proxy.lastTotalStakedBlock();
-        // const totalStakedWeight_2 = await EPNSCoreV1Proxy.totalStakedWeight();
-        // console.log("Total Staked weight after Bob Stake()", totalStakedWeight_2.toString());
+        const bobClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(BOB);
+        // console.log(`Bob Claimed ${bobClaim_after.toString()} tokens at Block number ${tx_bob.blockNumber}`);
+
+        await expect(bobClaim_after).to.be.gt(0);
+    })
+    it("3 Stakers stake equal tokens in same epoch - Should get equal rewards", async function(){
+        // Set pool fee and initiate stake epoch
+        await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
+        const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
+        
+        await passBlockNumers(5*EPOCH_DURATION)
+        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+        await stakePushTokens(BOBSIGNER, tokensBN(100));
+        // await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+        await stakePushTokens(ALICESIGNER, tokensBN(100));
+        await stakePushTokens(CHANNEL_CREATORSIGNER, tokensBN(100));
 
         await passBlockNumers(2 * EPOCH_DURATION);
         var currentBlock = await ethers.provider.getBlock("latest");
-        const currentEpoch = await EPNSCoreV1Proxy.lastEpochRelative(genesisEpoch, currentBlock.number);
-        
-        
-        //await EPNSCoreV1Proxy.connect(ADMINSIGNER).daoHarvest();
-        const lastTotal_4th = await EPNSCoreV1Proxy.lastTotalStakedBlock();
-
-        // console.log("GENESIS is", genesisEpoch.toString());
-        // console.log("Before initialize is", lastTotal_1st.toString());
-        // console.log("After initialize is", lastTotal_2nd.toString());
-        // console.log("After stake() is", lastTotal_3rd.toString());
-        // console.log("After daoHarvest() is", lastTotal_4th.toString());
-
-        // const totalStakedWeight_3 = await EPNSCoreV1Proxy.totalStakedWeight();
-        // console.log("Total Staked weight after DAO HARVEST", totalStakedWeight_3.toString());
-        //getEachEpochDetails(currentEpoch);
-        
-       const tx_bob = await EPNSCoreV1Proxy.connect(BOBSIGNER).unstake();
-
-        // const totalStakedWeight_4 = await EPNSCoreV1Proxy.totalStakedWeight();
-        // console.log("Total Staked weight after Bob UnStake()", totalStakedWeight_4.toString());
+        const currentEpoch = await EPNSCoreV1Proxy.lastEpochRelative(genesisEpoch, currentBlock.number);      
+       
+        const tx_bob = await EPNSCoreV1Proxy.connect(BOBSIGNER).unstake();
+        const tx_alice = await EPNSCoreV1Proxy.connect(ALICESIGNER).unstake();
+        const tx_channelCreator = await EPNSCoreV1Proxy.connect(CHANNEL_CREATORSIGNER).unstake();
   
-        
-        const userData = await EPNSCoreV1Proxy.userFeesInfo(BOB);
-        // console.log('USER BOB LAST STAKED BLOCK ',userData.lastStakedBlock.toString());
-        // console.log("GENESIS", genesisEpoch.toString());
-        // console.log("STAKED AT,", stakedBlock.blocknumber)
+      //   const userData = await EPNSCoreV1Proxy.userFeesInfo(BOB);
+      //   // console.log('USER BOB LAST STAKED BLOCK ',userData.lastStakedBlock.toString());
+      const bobClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(BOB);
+      const aliceClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(ALICE);
+      const channelCreatorClaim_after = await EPNSCoreV1Proxy.usersRewardsClaimed(CHANNEL_CREATOR);
 
-        // await expect(bobClaim_after).to.be.gt(0);
-        
+      // perPersonShare = ( totalPoolFees ).div(total Stakers)
+      const perPersonShare = ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5).div(3);
+  
+      // console.log(`Bob Claimed ${bobClaim_after.toString()} tokens at Block number ${tx_bob.blockNumber}`);
+      // console.log(`Alice Claimed ${aliceClaim_after.toString()} tokens at Block number ${tx_alice.blockNumber}`);
+      // console.log(`ChannelCreator Claimed ${channelCreatorClaim_after.toString()} tokens at Block number ${tx_channelCreator.blockNumber}`);
+
+      expect(ethers.BigNumber.from(bobClaim_after)).to.be.closeTo(ethers.BigNumber.from(perPersonShare), ethers.utils.parseEther("10"));
+      expect(ethers.BigNumber.from(aliceClaim_after)).to.be.closeTo(ethers.BigNumber.from(perPersonShare), ethers.utils.parseEther("10"));
+      expect(ethers.BigNumber.from(channelCreatorClaim_after)).to.be.closeTo(ethers.BigNumber.from(perPersonShare), ethers.utils.parseEther("10"));
+
     })
       /***
      * Case:
@@ -429,17 +434,17 @@ describe("EPNS CoreV2 Protocol", function () {
         
       
         await passBlockNumers(4*EPOCH_DURATION);
-        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+       await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(ALICESIGNER, tokensBN(100));
 
 
         await passBlockNumers(3*EPOCH_DURATION);
-        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+       //  await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(CHARLIESIGNER, tokensBN(100));
         
 
         await passBlockNumers(4*EPOCH_DURATION);
-        await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
+        //await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
         await stakePushTokens(CHANNEL_CREATORSIGNER, tokensBN(100));
 
 
@@ -470,7 +475,7 @@ describe("EPNS CoreV2 Protocol", function () {
     it.skip("Equal rewards should be distributed to Users after Stake Epoch End", async function(){
         // Set pool fee and initiate stake epoch
         await addPoolFees(ADMINSIGNER, ADD_CHANNEL_MIN_POOL_CONTRIBUTION.mul(5));
-        await EPNSCoreV1Proxy.connect(ADMINSIGNER).tempSetterFunction();
+        await EPNSCoreV1Proxy.connect(ADMINSIGNER).initializeStake();
 
         const genesisEpoch = await EPNSCoreV1Proxy.genesisEpoch();
         await passBlockNumers(5*EPOCH_DURATION)
@@ -652,3 +657,9 @@ describe("EPNS CoreV2 Protocol", function () {
     });
   });
 });
+
+
+// 119 049468389252261688 tokens at Block number 14798295
+// 160 714636312860706668 tokens at Block number 14798296
+// 142 856899975093277602 tokens at Block number 14798297
+// 95  237628327853808935 tokens at Block number 14798298

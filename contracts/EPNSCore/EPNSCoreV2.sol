@@ -1123,14 +1123,11 @@ contract EPNSCoreV2 is
       }
       usersRewardsClaimed[msg.sender] = usersRewardsClaimed[msg.sender].add(rewards);
       userFeesInfo[msg.sender].lastClaimedBlock = _tillBlockNumber;
-
-      console.log("\nTOTAL REWARDS FOR STAKER: ", usersRewardsClaimed[msg.sender]);
       //IERC20(PUSH_TOKEN_ADDRESS).transfer(msg.sender, rewards);
     }
 
     function daoHarvest() external onlyPushChannelAdmin(){
         uint256 weightContract = userFeesInfo[address(this)].stakedWeight;
-        console.log("STAKED Weight =", weightContract);
        IPUSH(PUSH_TOKEN_ADDRESS).resetHolderWeight(address(this));
       _adjustUserAndTotalStake(address(this), 0);
 
@@ -1146,7 +1143,7 @@ contract EPNSCoreV2 is
 
       usersRewardsClaimed[address(this)] = usersRewardsClaimed[address(this)].add(rewards);
       userFeesInfo[address(this)].lastClaimedBlock = block.number;
-      console.log("\nTotal Rewards of DAO", usersRewardsClaimed[address(this)]);
+
     }
 
     /**
@@ -1225,15 +1222,10 @@ contract EPNSCoreV2 is
     function _setupEpochsReward() internal {
     // Check if epoch setup is needed
     uint256 currentEpochId = lastEpochRelative(genesisEpoch, block.number);
-    uint256 lastEpochId = 0;
+    uint256 lastEpochId = lastEpochRelative(genesisEpoch, lastEpochInitialized);
 
-    if(lastEpochInitialized == block.number){
-        lastEpochId =  currentEpochId;
-    }else{
-        lastEpochId = lastEpochRelative(lastEpochInitialized, block.number);
-    }
-    
-    lastEpochId = lastEpochId == currentEpochId ? 0 : lastEpochId;
+    // console.log("CURRENT EPOCH is ", currentEpochId, "But LAST EPOCH ID is", lastEpochId);
+
     if (currentEpochId > lastEpochId) {
     
     uint256 pendingRewardsPerEpoch = (PROTOCOL_POOL_FEES - previouslySetEpochRewards);
