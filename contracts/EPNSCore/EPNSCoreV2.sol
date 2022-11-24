@@ -1236,11 +1236,7 @@ contract EPNSCoreV2 is
     lastEpochInitialized = block.number;
     }
  }
-
- function checkEpochReward(uint256 _epochId) public view returns(uint256){
-    return epochReward[_epochId];
-    
- }
+ 
 }
 
 // @audit-info -> LIST OF Pending Items
