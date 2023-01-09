@@ -13,7 +13,7 @@ pragma experimental ABIEncoderV2;
 import "./EPNSCoreStorageV1_5.sol";
 import "../interfaces/IADai.sol";
 import "../interfaces/ITempStorage.sol";
-import "../interfaces/ILendingPool.sol";
+import "../interfaces/ILendingPoolTemp.sol";
 import "../interfaces/IUniswapV2Router.sol";
 import "../interfaces/IEPNSCommV1.sol";
 import "../interfaces/ILendingPoolAddressesProvider.sol";
@@ -158,7 +158,7 @@ contract EPNSCoreV1_Temp is Initializable, EPNSCoreStorageV1_5, PausableUpgradea
         lendingPoolProviderAddress = _lendingPoolProviderAddress;
 
         FEE_AMOUNT = 10 ether; // 10 DAI out of total deposited DAIs is charged for Deactivating a Channel
-        MIN_POOL_CONTRIBUTION = 1 ether; // 50 DAI or above to create the channel
+        MIN_POOL_CONTRIBUTION = 50 ether; // 50 DAI or above to create the channel
         ADD_CHANNEL_MIN_FEES = 50 ether; // can never be below MIN_POOL_CONTRIBUTION
 
         ADJUST_FOR_FLOAT = 10**7;
@@ -215,6 +215,14 @@ contract EPNSCoreV1_Temp is Initializable, EPNSCoreStorageV1_5, PausableUpgradea
             "EPNSCoreV1.5::setFeeAmount: Fee amount must be greater than ZERO"
         );
         FEE_AMOUNT = _newFees;
+    }
+
+    function setMinPoolContribution(uint256 _newAmount) external onlyGovernance {
+        require(
+            _newAmount > 0,
+            "EPNSCoreV1_5::setMinPoolContribution: New Pool Contribution amount must be greater than ZERO"
+        );
+        MIN_POOL_CONTRIBUTION = _newAmount;
     }
 
     function pauseContract() external onlyGovernance {
@@ -502,7 +510,6 @@ contract EPNSCoreV1_Temp is Initializable, EPNSCoreStorageV1_5, PausableUpgradea
                 CHANNEL_POOL_FUNDS = CHANNEL_POOL_FUNDS.sub(poolFees);
                 uint256 adjustedNewWeight = newPoolContribution.mul(ADJUST_FOR_FLOAT).div(MIN_POOL_CONTRIBUTION);
 
-                channels[_channelAddresses[i]].channelUpdateBlock = block.number;
                 channels[_channelAddresses[i]].channelWeight = adjustedNewWeight;
                 channels[_channelAddresses[i]].poolContribution = newPoolContribution;
                 ITempStorage(_tempStorageAddress).setChannelAdjusted(_channelAddresses[i]);
@@ -924,7 +931,7 @@ contract EPNSCoreV1_Temp is Initializable, EPNSCoreStorageV1_5, PausableUpgradea
         ILendingPool lendingPool = ILendingPool(provider.getLendingPool());
         IERC20(daiAddress).approve(provider.getLendingPoolCore(), amount);
         // Deposit to AAVE
-        lendingPool.deposit(daiAddress, amount, uint16(REFERRAL_CODE)); // set to 0 in constructor presently
+        lendingPool.deposit(daiAddress, amount, address(this), uint16(REFERRAL_CODE));
     }
 
     /**
@@ -961,8 +968,7 @@ contract EPNSCoreV1_Temp is Initializable, EPNSCoreStorageV1_5, PausableUpgradea
             lendingPoolProviderAddress
         );
         ILendingPool lendingPool = ILendingPool(provider.getLendingPool());
-
-        IADai(aDaiAddress).redeem(_amount);
+        lendingPool.withdraw(daiAddress, _amount, address(this));
     }
 
     /* **************
